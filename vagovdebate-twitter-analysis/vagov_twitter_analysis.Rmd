@@ -1,0 +1,190 @@
+---
+title: "VA Governor's Debate Twitter Reactions"
+author: 'Josh Yazman'
+output: html_notebook
+---
+
+On Septempter 19th, 2017, Chuck Todd hosted a debate between Republican Ed Gillespie and Democrat Ralph Northam. This analysis will use the `tidytext`, `rtweet`, `ggplot`, `dplyr`, and a few other packages to analyze Twitter reactions through the #VAGov and #VAGovDebate hashtags. As a first step, we need to load (and in some cases download) the necessary R packages.
+
+```{r, message = FALSE, warning=FALSE, echo = TRUE}
+# install.packages("rtweet")
+library(rtweet)
+library(tidytext)
+library(dplyr)
+library(ggplot2)
+# devtools::install_github('yaztheme','joshyazman')
+library(yaztheme)
+library(stringr)
+```
+
+Now I need to set up access to the Twitter API (my credentials are removed, but you can set up a developers account [here](apps.twitter.com)). 
+
+```{r, message = FALSE, warning=FALSE, echo = TRUE}
+appname <- "redacted"
+key <- "redacted"
+secret <- "redacted"
+twitter_token <- create_token(
+  app = appname,
+  consumer_key = key,
+  consumer_secret = secret)
+```
+
+Now that the API key is set up, I'll use the `search_tweets` function to search for any tweets that use either "#VAGovDebate" or "VAGov". I want to make sure I get as many tweets as possible, so I set `n = 18000`, the maximum number allowed by the API at any one time. 
+
+```{r, message = FALSE, warning=FALSE, echo = TRUE}
+tweets_raw <- search_tweets(q = "#VAGovDebate OR #VAGov", n = 18000)
+```
+
+The tweets come back in the form of a nice, tidy dataframe, which is great! But I don't need all of the tweets so I'm going to limit the data to tweets from the day of the debate and cut down some columns I don't need using the `select()`, `%>%`, and `filter()` functions from the `dplyr` package.
+
+```{r, message = FALSE, warning=FALSE, echo = TRUE}
+tweets <- tweets_raw%>%
+  select(screen_name, created_at, text, retweet_count, favorite_count, mentions_screen_name, hashtags)%>%
+  filter(created_at >= '2017-09-19')
+
+str(tweets)
+```
+
+## Mentions
+Now we have a clean, rich set of tweets to analyze! First, I want to just look at tweet volume over the course of the day. I can do that with a line graph using ggplot. First I'll aggregate tweets by minute and then plot them. Not surprisingly, there was a spike in tweets related to the debate during the debate! 
+
+```{r, message = FALSE, warning=FALSE, echo = TRUE}
+library(flux)
+
+tweets_by_min <- tweets%>%
+  mutate(mins = round(created_at, 'mins'))%>%
+  group_by(mins)%>%
+  summarise(n = n())%>%
+  filter(mins > '2017-09-19 17:00:00')
+
+ggplot(tweets_by_min, aes(x = mins, y = n))+
+  geom_line(color = yaz_cols[3], size = 1)+
+  labs(x = 'Minute (UTC)',
+       y = 'Number of Tweets',
+       title = 'Tweet Frequency by Time',
+       subtitle = 'Tweets using #VAGov or #VAGovDebate on debate day')+
+  theme_yaz()
+```
+
+Let's dig a bit deeper and look at how many tweets mention each candidate. Again, I'll create an aggregated dataframe of tweets by candidate by minute, but this time I need to take one extra step and create a flag variable for mentions of [@RalphNortham](https://twitter.com/RalphNortham) and [@EdWGillespie](https://twitter.com/EdWGillespie) or both. 
+
+```{r, message = FALSE, warning=FALSE, echo = TRUE}
+tweets_candidate_minute <- tweets%>%
+  mutate(candidate_mention = ifelse(grepl('RalphNortham', mentions_screen_name) 
+                                    & grepl('EdWGillespie', mentions_screen_name), 'Both',
+                                    ifelse(grepl('RalphNortham', mentions_screen_name),'Northam',
+                                           ifelse(grepl('EdWGillespie', mentions_screen_name), 'Gillespie',
+                                                  'Neither'))),
+         mins = round(created_at, 'mins'))%>%
+  group_by(candidate_mention, mins)%>%
+  summarise(n = n())%>%
+  filter(mins > '2017-09-19 17:00:00')
+
+ggplot(tweets_candidate_minute, aes(x = mins, y = n, color = candidate_mention))+
+  geom_line(size = 1)+
+  labs(x = 'Minute (UTC)',
+       y = 'Number of Tweets',
+       title = 'Tweet Frequency by Time and Candidate',
+       subtitle = 'Tweets using #VAGov or #VAGovDebate on debate day')+
+  theme_yaz()+
+  scale_color_manual(name = 'Candidate Mentioned', values = yaz_cols[c(4,2,3,1)])
+```
+
+Most of the time, people tweeting about the debate weren't necessarily mentioning either or both candidates!, but there were some clear moments when Gillespie or Northam popped. I didn't keep a timed transcript, though, so if you're reading this and have some ideas of what the candidates were talking about at those times, let me know!
+
+## Hashtags
+Now I want to look at hashtag frequency. The `search_tweets` output provides a tidy field for hashtags, but we want to get a count of each individual hashtag used during the debate so we want each hashtag on its own line of a dataframe. The `tidytext` package has some handy functions for that!
+
+```{r, message = FALSE, warning=FALSE, echo = TRUE}
+hashtag_count <- tweets%>%
+  mutate(candidate_mention = ifelse(grepl('RalphNortham', mentions_screen_name) 
+                                    & grepl('EdWGillespie', mentions_screen_name), 'Both',
+                                    ifelse(grepl('RalphNortham', mentions_screen_name),'Northam',
+                                           ifelse(grepl('EdWGillespie', mentions_screen_name), 'Gillespie',
+                                                  'Neither'))),
+         mins = round(created_at, 'mins'))%>%
+  filter(created_at > '2017-09-19 17:00:00' & !is.na(candidate_mention))%>%
+  unnest_tokens(hts, hashtags)%>%
+  group_by(hts, candidate_mention)%>%
+  summarise(n = n())%>%
+  filter(!hts %in% c('vagovdebate','vagov')
+         & n > 20 & !is.na(hts))
+
+ggplot(hashtag_count, aes(x = reorder(hts, n), y = n, fill = candidate_mention))+
+  geom_bar(stat = 'identity')+
+  coord_flip()+
+  theme_yaz()+
+  labs(y = 'Hashtag Frequency', x = element_blank(),
+       title = 'Hashtag Frequency by Candidate',
+       subtitle = 'Hashtags limited to those used more than 20 times after 3:00pm EST on Debate Day')+
+  scale_fill_manual(name = 'Candidate Mentioned', values = yaz_cols[c(2,3,1)])
+```
+
+## Word Distinctiveness and Sentiment Analysis
+Lastly I want to look at tweet sentiments. The `tidytext` package has four sentiment lexicons available. The `bing` and `nrc` lexicons both offer pretty good classifications of words as either positive or negative, although [`nrc` tends to err on the side of being overly positive](http://rpubs.com/joshyazman/sentiment-analysis-lexicon-comparison). The `nrc` lexicon also classifies words as indicative of "trust", "fear", "sadness", "anger", "surprise", "positive", "disgust", "joy", and "anticipation" as well. We can unnest tweet words the same way we did with hashtags and then use a simple join to append the positive/negative scores from the `bing` lexicon and all of the sentiments from the `nrc` lexicon.
+
+```{r, message = FALSE, warning=FALSE, echo = TRUE}
+nrc <- sentiments%>%
+  filter(!sentiment %in% c('positive','negative')
+         & lexicon == 'nrc')%>%
+  select(word, nrc = sentiment)
+bing <- sentiments%>%
+  filter(lexicon == 'bing')%>%
+  mutate(bing = ifelse(sentiment == 'positive',1,-1))%>%
+  select(word, bing)
+
+# A few steps to clean and format the tweet text and unnest each word
+reg <- "([^A-Za-z\\d#@']|'(?![A-Za-z\\d#@]))"
+tweet_words <- tweets%>%
+  filter(!str_detect(text, '^"')) %>%
+  mutate(candidate_mention = ifelse(grepl('RalphNortham', mentions_screen_name) 
+                                    & grepl('EdWGillespie', mentions_screen_name), 'Both',
+                                    ifelse(grepl('RalphNortham', mentions_screen_name),'Northam',
+                                           ifelse(grepl('EdWGillespie', mentions_screen_name), 'Gillespie',
+                                                  'Neither'))),
+         text = str_replace_all(text, 'https://t.co/[A-Za-z\\d]+|&amp;', ''),
+         mins = round(created_at, '15mins'))%>%
+  filter(created_at > '2017-09-19 17:00:00' & !is.na(candidate_mention))%>%
+  unnest_tokens(word, text, token = "regex", pattern = reg)%>%
+  filter(!word %in% stop_words$word,
+         str_detect(word, "[a-z]"))
+
+nrc_tweet_words <- inner_join(tweet_words, nrc, by = 'word')
+bing_tweet_words <- inner_join(tweet_words, bing, by = 'word')
+```
+
+First I want to look at tweet sentiment over time broken out by candidate mention. It looks like net sentiments were generally more positive before the debate than during or after, which makes sense because pre-debate tweets were mostly (anecdotally) about hyping one's candidate rather than hitting the other. During the debate, everyone's tweets got more negative, but Northam mentions remained the most positive. 
+
+```{r, message = FALSE, warning=FALSE, echo = TRUE}
+ggplot(bing_tweet_words%>%group_by(mins, candidate_mention)%>%
+                         summarise(mean_sent = mean(bing, na.rm = T), n = n()),
+  aes(x = mins, y = mean_sent, color = candidate_mention, size = n))+
+  geom_line(size = 1)+
+  geom_point()+
+  geom_hline(yintercept = 0, linetype = 'dashed')+
+  ylim(-1,1)+
+  theme_yaz()+
+  labs(x = 'Time (UTC)', y = 'Average Tweet Sentiment',
+       title = 'Tweet Sentiments by Candidate Over Time')+
+  scale_color_manual(name = 'Candidate Mentioned', values = yaz_cols[c(4,2,3,1)])+
+  scale_size_continuous(name = 'Number of Tweets')
+```
+
+To examine NRC sentiments, we calculate the percentage of words within each candidate mention grouping that match each potential sentiment. Anticipation pops across the board, likely because of tweets leading up the the debate. Aside from that, it's notable that Gillespie leads slightly on Trust and Northam leads slightly on Joy. Tweets that mention both candidates are the angriest. 
+
+```{r, message = FALSE, warning=FALSE, echo = TRUE}
+ggplot(nrc_tweet_words%>%
+         group_by(mins, candidate_mention, nrc)%>%
+         summarise(n = n())%>%
+         group_by(candidate_mention)%>%
+         mutate(pct = n/sum(n))%>%
+         ungroup(),
+  aes(x = nrc, y = pct, fill = candidate_mention))+
+  geom_bar(stat = 'identity')+
+  coord_flip()+
+  facet_wrap(~candidate_mention)+
+  theme_yaz()+
+  labs(y = 'Sentiment', x = element_blank(),
+       title = 'Tweet Sentiments by Candidate')+
+  scale_fill_manual(name = 'Candidate Mentioned', values = yaz_cols[c(4,2,3,1)])
+```
