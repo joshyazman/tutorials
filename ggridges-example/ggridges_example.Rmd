@@ -1,0 +1,67 @@
+---
+title: "Tracking Senate Partisanship with ggridges"
+author: 'Josh Yazman'
+output: html_notebook
+---
+
+## Introduction
+The United States Senate is comprised of two senators elected from each state every six years. The institution was designed for slow, stable deliberations that are independent of the pressures and passions of day to day politics. But that doesn't mean Senators are free from partisanship. Recently (and currently - as of the time of this writing) the Senate has engaged in fiercely partisan debates over the best way to kill the Affordable Care Act. Additionally, at the outset of the Trump administration, there have been hot contests about Trump administration appointees and Mitch McConnell's successful gambit to steal a Supreme Court seat - all of which have covered the full range of economic and social issues in the country. 
+
+Partisanship is just as important to the Senate as any other deliberative body. To track legislative partisanship, Keith T. Poole and Howard Rosenthal developed the [DW-NOMINATE](https://voteview.com/about) metric. It's tracked for social and economic issues separately with adjustments made for issue salience over time.
+
+## How To Make A Ridge Plot
+My goal here is to make a plot that displays the distribution of DW-NOMINATE scores for each party over the last 50 years or so. To do that, I downloaded the DW-NOMINATE data [here](https://legacy.voteview.com/dwnomin_joint_house_and_senate.htm) and loaded the `ggridges`, `ggplot2`, `dplyr` and [`yaztheme`](https://github.com/joshyazman/yaztheme) (a custom ggplot theme I use in ggplot visualizations) packages. I also read in the DW-NOMINATE data from a csv I stored in a folder on my desktop and limit the sample to Senators (congressional district = 0 to exclude House members and state not equal to "USA" to exclude Vice Presidents).
+```{r, warning=FALSE}
+library(dplyr)
+
+dwnominate <- read.csv('/Users/joshyazman/Desktop/dwnominate_fun/dwnominate.csv')%>%
+  filter(congress >= 95 & cd == 0 & state != 'USA' & party_code %in% c(100,200))
+```
+
+Now I want to make a distribution plot for just one congress to demonstrate the `ggplot` code involved in one row of the ridge plot. The final output of this plot will have two sets of ridge diagrams side by side.  
+```{r, message=FALSE, warning=FALSE, fig.height = 3, fig.width=8}
+library(ggplot2)
+# devtools::install_github('yaztheme','joshyazman')
+library(yaztheme)
+
+ggplot(dwnominate%>%filter(congress == '113'), aes(x = dim.a, fill = as.character(party_code)))+
+    geom_density(alpha = .5)+
+    scale_fill_manual(values = yaz_cols, name = 'Party',labels = c('Democrat','Republican'))+
+    yaztheme::theme_yaz()+
+    labs(x = 'DW-Nominate Score',
+         y = element_blank(),
+         title = 'Polarization of the 113th Senate',
+         subtitle = 'Session 113: Dimension 1 - Economic Ideology')+
+      xlim(-1,1)
+```
+
+Finally, I'll use the `ggridges` package to create the above plot for every congress and stack them on top of one another. I'll do this separately for each DW-NOMINATE score and place them next to one another using the `gridExtra` package. Color is mapped to party with red representing Republicans and blue representing Democrats. Additionally, the fill color is set to 50% transparency because there is some overlap in almost all lines of the ridge diagram. 
+
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width = 10}
+library(ggridges)
+library(gridExtra)
+grid.arrange(
+  ggplot(dwnominate, aes(x = dim.a, y = reorder(as.character(congress), desc(congress)),
+                         fill = as.character(party_code)))+
+    geom_density_ridges(alpha = .5)+
+    scale_fill_manual(values = yaz_cols, name = 'Party',labels = c('Democrat','Republican'))+
+    yaztheme::theme_yaz()+
+    labs(y = 'Congress',
+         x = element_blank(),
+         title = element_blank(),
+         subtitle = 'Senate DW-Nominate Dimension 1 - Economic Ideology'),
+    ggplot(dwnominate, aes(x = dim.b*-1, y = reorder(as.character(congress), desc(congress)),
+                           fill = as.character(party_code)))+
+      geom_density_ridges(alpha = .5)+
+      scale_fill_manual(values = yaz_cols, name = 'Party',labels = c('Democrat','Republican'))+
+      yaztheme::theme_yaz()+
+      labs(y = 'Congress',
+           x = element_blank(),
+         title = element_blank(),
+           subtitle = 'Senate DW-Nominate Dimension 2 - Social Ideology'),
+  nrow = 1
+)
+```
+
+## Analysis
+These two plots demonstrate asymmetric polarization in the Senate over the last 40 years on economic issues. Democrats have largely stayeed clustered around -.05 indicating a center-left lean. Republicans have moved from very broad distributions that often ventured into liberal territory to a more uniformly conservative distribution clustered around 0.5-0.7. On social issues we see the opposite trend. There have always been some conservative Democrats and liberal Republicans, but voting behavior on social issues has largely converged over time. 
