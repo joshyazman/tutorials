@@ -1,0 +1,120 @@
+---
+title: "Following Up On \"Does Sentiment Analysis Work? A tidy Analysis of Yelp Reviews\""
+author: "Josh Yazman"
+date: "9/12/2017"
+output: html_notebook
+---
+
+In 2016, David Robinson wrote a [blog post](http://varianceexplained.org/r/yelp-sentiment/) assessing the `AFINN` sentiment lexicon by looking at the distributions of sentiment scores in posts with different overall ratings. In theory, Yelp reviews with 1 star should be more negative than reviews with 3 stars. The analysis illustrated the effectiveness of the `AFINN` lexicon, but there are three other lexicons included in the `tidytext` package (`nrc`,`bing`, and `loughran`). This post will first replicate Robinson's box plot then apply the same analysis to the other three sentiment lexicons included in tidytext. 
+
+## Getting Started
+The first step is to read a sample of the `yelp_dataset_challenge_academic_dataset`. As Robinson says, you can use the whole set, but for speedier processing it helps to use a subset of reviews (in this case I used 200,000 per Robinson's example). 
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+
+infile <- "~/Downloads/yelp_dataset_challenge_academic_dataset/review.json"
+review_lines <- read_lines(infile, n_max = 200000, progress = FALSE)
+
+library(stringr)
+library(jsonlite)
+?str_c()
+# Each line is a JSON object- the fastest way to process is to combine into a
+# single JSON string and use fromJSON and flatten
+reviews_combined <- str_c("[", str_c(review_lines, collapse = ", "), "]")
+
+reviews <- fromJSON(reviews_combined) %>%
+  flatten() %>%
+  tbl_df()
+```
+
+Now, to produce sentiment scores, I'll unnest the text field to create a dataframe with one row per word, then join that dataframe with each of the four sentiment lexticons. In cases where scores are `positive` or `negative` those values are converted to `1` and `-1` respectively. In cases (like the `nrc` lexicon) where there are more options available, only `positive` and `negative` tags are retained. 
+
+```{r}
+library(tidytext)
+
+# create df with one line per word. There should be ~8.1 million lines 
+review_words <- reviews %>%
+  select(review_id, business_id, stars, text) %>%
+  unnest_tokens(word, text) %>%
+  filter(!word %in% stop_words$word,
+         str_detect(word, "^[a-z']+$"))
+
+# set up each lexicon as it's own df
+nrc <- sentiments%>%
+  filter(sentiment %in% c('positive','negative')
+         & lexicon == 'nrc')%>%
+  mutate(nrc = ifelse(sentiment == 'positive',1,-1))%>%
+  select(word, nrc)
+
+bing <- sentiments%>%
+  filter(lexicon == 'bing')%>%
+  mutate(bing = ifelse(sentiment == 'positive',1,-1))%>%
+  select(word, bing)
+
+loughran <- sentiments%>%
+  filter(sentiment %in% c('positive','negative') 
+         & lexicon == 'loughran')%>%
+  mutate(loughran = ifelse(sentiment == 'positive',1,-1))%>%
+  select(word, loughran)
+
+afinn <- sentiments%>%
+  filter(lexicon == 'AFINN')%>%
+  select(word, afinn = score)
+
+# Join each lexicon to the review_words dataframe
+reviews_scored <- review_words%>%
+  left_join(nrc, by = 'word')%>%
+  left_join(bing, by = 'word')%>%
+  left_join(loughran, by = 'word')%>%
+  left_join(afinn, by = 'word')
+```
+
+Now that we have a dataset with each word mapped to all four potential sentiment scores, we can calculate the average sentiment of each review with a simple aggregation function (`group_by` and `summarise`).
+
+```{r, fig.align='center'}
+review_scores_summary <- reviews_scored%>%
+  group_by(review_id, stars)%>%
+  summarise(nrc_score = mean(nrc, na.rm = T),
+            bing_score = mean(bing, na.rm = T),
+            loughran_score = mean(loughran, na.rm = T),
+            afinn_score = mean(afinn, na.rm = T))
+```
+
+## Visualizing Score Distributions
+First I want to replicate Robinson's box plot for `AFINN` scores. 
+
+```{r, fig.align='center'}
+library(ggplot2)
+
+afinn.box <- ggplot(review_scores_summary, aes(x = as.character(stars), y = afinn_score))+
+  geom_boxplot()+
+  labs(x = 'Yelp Review Score',
+       y = 'AFINN Score')
+
+afinn.box
+```
+
+This looks generally positive! As Robinson points out, there are a large number of outliers (strong reviews coded as negative and vice versa), but generally this is a good start. But now let's see how the other three lexicons do in comparison. 
+
+```{r, message=FALSE, warning=FALSE}
+nrc.box <- ggplot(review_scores_summary, aes(x = as.character(stars), y = nrc_score))+
+  geom_boxplot()+
+  labs(x = 'Yelp Review Score',
+       y = 'NRC Score')
+bing.box <- ggplot(review_scores_summary, aes(x = as.character(stars), y = bing_score))+
+  geom_boxplot()+
+  labs(x = 'Yelp Review Score',
+       y = 'Bing Score')
+loughran.box <- ggplot(review_scores_summary, aes(x = as.character(stars), y = loughran_score))+
+  geom_boxplot()+
+  labs(x = 'Yelp Review Score',
+       y = 'Loughran Score')
+
+library(gridExtra)
+
+grid.arrange(afinn.box, nrc.box, bing.box, loughran.box, nrow = 2)
+```
+
+NRC performs OK, but errs on the side of being overly positive. The median score for 1 star reviews is a net positive! AFINN has a similar problem although it's less egregious there. Loughran orders the median distributions correctly, but the boxes are very wide, particularly in the middle. The Bing lexicon appears to have fewer outliers but the score distributions are still skewed for five-star reviews. Bing also has another advantage not discussed in this post or Robinson's in that it has the most comprehensive lexicon with over 6,000 words scored (NRC is next closets with over 5,000). Given those two advantages, I plan on using the Bing sentiment lexicon as much as possible moving forward.
