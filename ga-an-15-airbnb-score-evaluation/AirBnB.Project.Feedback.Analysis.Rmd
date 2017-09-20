@@ -1,0 +1,77 @@
+---
+title: "Mapping Presentation Improvement From Round 1 to Round 2"
+output: html_notebook
+---
+
+Many of you in class have expressed interest in learning `R` which I highly encourage! Unfortunately, we don't have time to teach `R` in this course. Instead, I'm going to start sharing short blog posts like this one to explain some examples of my own `R` work that's relevant to this class.
+
+For the AirBnB project, our class did two rounds of round-robin presentations followed by peer feedback. Overall, evaluations improved slightly from round 1 (R1) to round 2 (R2) which is great! Unfortunately, that slight growth was split with half of the class improving and half of the class declining. 
+
+This blog post will cover reading the data, manipulating the data to calculate change over time, and visualization of the data using `base R`, `dplyr`, and `ggplot2`
+
+## Reading the Data and Setting Up
+First we need to read in a few `R` packages and set our workind directory. The working directory is where `R` looks first to find the data we're using. Setting this isn't totally necessary, but it helps! Next we'll load a few `R` packages. Packages can be thought of as add-ons to the basic syntax in `R`. People who figure out new or better ways to do something that `R` does can publish those processes for us to use to make our own analysis easier. Finally, we'll read in the csv file from our working directory and print the first few rows. 
+
+```{r setup}
+# Set the document to display code and outputs
+knitr::opts_chunk$set(echo=TRUE)
+# Specify the folder in your computer where  this data lives (this will be different for you)
+setwd('/Users/joshyazman/Desktop/AirBnB Project Feedback Visualization/')
+
+# Load up the relevant R packages
+library(ggplot2)
+library(dplyr)
+
+# The read.csv() function is how we connect R to our data
+reviews <- read.csv('AirBnB Project Feeback (Responses) - Anonymized Responses.csv')
+
+# Print the top few lines of review data
+head(reviews)
+```
+
+## Data Manipulation
+Now we need to prepare the data for visualization. In our case that's we need to calculate the overall score for each review and then average of that over all score for each student in each round of presentations. Here we'll use the `%>%` operator to take whatever object is to the left of the symbol and use it as an input in the function following it. For example, if a function requires a data table as an input, it might look like this: `function(table)`. But we could also write that as `table%>%function()`. The rest of this section strings together `dplyr` syntax to create the table I'm looking for. 
+
+```{r data-manipulation}
+reviews_manipulated <- reviews%>%
+  # Mutate allows us to create additional columns of data
+  mutate(overall = (How.effective.was.the.presenter.s.argument.+ 
+                   Please.rate.the.organization.of.the.presentation.+
+                   Please.rate.the.visuals.included.in.the.presentation.)/3)%>%
+  # group_by is dplyr's function for aggregating a table (like specifying a row variable in a pivot table)
+  group_by(Name.of.Presenter, Presentation.Round)%>%
+  # summarise() is like specifying the value in a pivot table
+  summarise(mean_score = mean(overall))
+```
+
+We can tell if our code worked by printing out the first few rows of the resulting table.
+```{r}
+print(head(reviews_manipulated))
+```
+
+# Visualizing The Data
+There are a number of ways we could display the data we've calculated, but I've decided to use a line graph with points for each round of presentations. Essentially, I need to layer a line graph on top of a scatter plot with a separate line for each student.
+
+```{r visual, }
+# The first step in ggplot is to set some characteristics that will apply to the whole graph. Then we'll add new features as we go!
+# We'll start with setting the x and y axis and specifying the dataset we want to use
+visual <- ggplot(data = reviews_manipulated, aes(x = as.character(paste0('Round ',Presentation.Round)), 
+                                       y = mean_score, group = Name.of.Presenter))+
+  # Add lines that connect the dots (the alpha= argument makes the lines lighter or darker)
+  geom_line(alpha = .7, size = 1)+
+  # Add points and set some characteristics of those points
+  geom_point(size = 2, color = '#4581b2')+
+  # Specify the axis labels
+  labs(y = 'Average Overall Score',
+       x = element_blank(),
+       title = 'Change in Scores from Round 1 to Round 2',
+       subtitle = 'Data comes from peer reviews of class project presentations in GA\'s analytics course')
+
+# Call the object to display it
+visual
+```
+
+I think it's pretty cool to see how some of these scores improved from Round 1 to Round 2. Conversely, there were some presentations that didn't do so well in the second round. Maybe since presentations were given to different groups of people in each round, the reviewers were tougher or easier for some people from round to round. Another possible explanation is that the time limit for presentations changes from 5 minutes in R1 to 3 minutes in R2 and maybe that explains some of the change. 
+
+## Conclusion
+Overall, presentations went really well for a first data analysis presentation. You all worked really hard on these projects and did some great work. But when you go read over your review scores, make sure you're thinking about whether your score went up or down and try to think through why that happened so you can improve for the next round. I hope you find this information useful and maybe learn a little `R` and a little about the data analysis process from reading this. Please feel free to reach out to Luke or me if you have any questions!
